@@ -1,0 +1,32 @@
+#!/bin/bash
+
+if [[ $# -lt 1 ]]; then
+  echo "Usage: ec2-connect STACK_NAME [PUBLIC_KEY_PATH] [PROFILE_NAME]"
+  exit 1
+fi
+stackName=$1
+pubkey=${2-$HOME/.ssh/id_rsa.pub}
+if [[ -n $3 ]]; then
+    echo "applying profile"
+    profile="--profile $3"
+fi
+sshUser='ec2-user'
+
+instanceId=$(aws cloudformation ${profile} describe-stacks --stack-name $stackName --query "Stacks[0].Outputs[?OutputKey=='InstanceId'].OutputValue" --output text)
+
+az=$(aws ec2 ${profile} describe-instances --instance-id ${instanceId} --query 'Reservations[0].Instances[0].Placement.AvailabilityZone' --output text)
+publicIp=$(aws ec2 ${profile} describe-instances --instance-id ${instanceId} --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
+
+
+echo "sending public key to ${instanceId}"
+aws ec2-instance-connect ${profile} send-ssh-public-key --instance-id ${instanceId} --instance-os-user ${sshUser} \
+--ssh-public-key file://${pubkey} --availability-zone ${az} > /dev/null
+
+if [[ $2 != '--send-key-only' ]]; then
+    echo "connecting to ${publicIp} at ${az}"
+    # expecting something like xxx.pub and its private key name to be xxx
+    # https://unix.stackexchange.com/a/531943
+    privateKey="${pubkey//\.pub/}"
+    # echo ${privateKey}
+    ssh -i ${privateKey} ${sshUser}@${publicIp}
+fi
